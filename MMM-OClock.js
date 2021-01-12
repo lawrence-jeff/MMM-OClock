@@ -4,7 +4,6 @@
 // v2.0
 
 let MAX_LIFETIME = 85;
-let MSEC = 1000;  // sec to msec conversion
 
 Module.register("MMM-OClock", {
   defaults: {
@@ -18,7 +17,7 @@ Module.register("MMM-OClock", {
     centerFont: "bold 20px Roboto",
     centerTextColor:"#000000",
     hands: ["month", "date", "day", "hour", "minute", "second"],
-    //"year" or "age", "month", "date", "week", "day", "hour", "minute", "second"
+    //"year" or "timer", "month", "date", "week", "day", "hour", "minute", "second"
 
     handType: "round", //"default", "round"
     handWidth: [40, 40, 40, 40, 40, 40, 40],
@@ -42,11 +41,11 @@ Module.register("MMM-OClock", {
     birthMonth: 0,      // e.g. 1-12
     lifeExpectancy: MAX_LIFETIME, // default: 85
     linearLife: false,  // set to true to plot life linearly not logarithmically
-    ageBarColor: [],  // false for no gradient, empty for default, or
+    timerBarColor: [],  // false for no gradient, empty for default, or
                       // [start, stop] colors, e.g. ['#000', 'white']
 
     handConversionMap: {
-      "age": "n/a",
+      "timer": "n/a",
       "year": "YYYY",
       "month": "M",
       "date": "D",
@@ -67,10 +66,21 @@ Module.register("MMM-OClock", {
       x: this.getDim('canvasWidth') / 2,
       y: this.getDim('canvasHeight') / 2
     }
-    this.endMap = {}
+    //jeff
+    let now = moment();
+    console.log(`Now: ${now.format('ll')}`);
+    now.add('300', 'seconds');
+    this.endtime = now;
+    this.totalseconds = 300;
     this.colorRange = {}
-    this.config.secondsUpdateInterval = Math.max(1, Math.floor(this.config.secondsUpdateInterval))
   },
+
+  getSecondsLeft: function() {
+    let secondsleft = this.endtime.diff(moment(), 'seconds');
+    console.log(`Difference in seconds: ${secondsleft}`);
+    return secondsleft
+  },
+
 
   getDim: function(dim, index) {
     if (!(dim in this.config)) throw new Error('Unkown config property in getDim(): ' + dim);
@@ -82,81 +92,27 @@ Module.register("MMM-OClock", {
   notificationReceived: function(noti, payload, sender) {
     switch(noti) {
       case "DOM_OBJECTS_CREATED":
-        this.colorTrick()
         // slight delay to make sure fonts are loaded before first draw
         setTimeout(() => this.updateView(), 1500)
         break
-    }
-  },
-
-  colorTrick: function() {
-    var s = {}
-    if (this.config.colorType == "radiation") {
-      s.s = this.config.colorTypeRadiation[0]
-      s.e = this.config.colorTypeRadiation[1]
-    } else if (this.config.colorType == "transform") {
-      s.s = this.config.colorTypeTransform[0]
-      s.e = this.config.colorTypeTransform[1]
-    } else {
-      return
-    }
-
-    var hf = document.getElementById("OCLOCK_TRICK")
-    hf.style.borderColor = s.s
-    hf.style.backgroundColor = s.e
-    document.getElementById("")
-
-    var cs = window.getComputedStyle(hf)
-    var f1 = cs.getPropertyValue("border-color")
-    var f2 = cs.getPropertyValue("background-color")
-    hf.style.display = "none"
-
-    this.colorRange = {
-      start:f1.match(/\d+/g).map(Number),
-      end:f2.match(/\d+/g).map(Number),
+      case "START_TIMER":
+        this.totalseconds = payload;
+        let now = moment();
+        now.add(payload, 'seconds');
+        this.endtime = now;
+        break
+      case "PAUSE_TIMER":
+        clearTimeout(this.secondsTimer);
+        break
     }
   },
 
   updateView: function() {
     this.drawFace()
     // update seconds if we have to
-    if (this.config.hands.includes('second')) {
-      clearTimeout(this.secondsTimer)
-      let offset = this.getNow().milliseconds()
-      this.secondsTimer = setTimeout(() => this.updateSeconds(),
-        MSEC * this.config.secondsUpdateInterval - offset)
-    } else {
-      setTimeout(() => this.updateView(), this.getNextMinuteTick())
-    }
-  },
-
-  // draw seconds hand
-  updateSeconds: function(lastTick) {
-    var now = this.getNow()
-    var ctx = this.getCtx()
-    this.secondsCfg.pros = lastTick ? 1 : this.getPros(now, this.secondsCfg.type)
-    this.drawArc(ctx, this.secondsCfg)
-    if (lastTick) return
-
-    let msecs = now.milliseconds()
-    let nextTick = MSEC * this.config.secondsUpdateInterval - msecs
-    let timeToLastTick = MSEC * (60 - now.seconds())
-    if (nextTick + msecs >= timeToLastTick - 10) {
-      // ensure we always draw the 60th second line
-      nextTick = timeToLastTick
-      this.secondsTimer = setTimeout(() => this.updateSeconds(true), nextTick - 50)
-      setTimeout(() => this.updateView(), nextTick + 200)
-    } else {
-      this.secondsTimer = setTimeout(() => this.updateSeconds(), nextTick)
-    }
-  },
-
-  // next tick for updating for whole view (on the minute)
-  getNextMinuteTick: function() {
-    var now = moment()
-    var nextTick = (59 - now.seconds()) * MSEC + (MSEC - now.milliseconds())
-    if (nextTick <= 0) nextTick = 60 * MSEC
-    return nextTick
+    clearTimeout(this.secondsTimer)
+    let offset = this.getNow().milliseconds()
+    this.secondsTimer = setTimeout( () => this.updateView(), 1000 - offset)
   },
 
   getDom: function() {
@@ -167,29 +123,8 @@ Module.register("MMM-OClock", {
     canvas.width = this.getDim('canvasWidth')
     canvas.height = this.getDim('canvasHeight')
     canvas.id = "OCLOCK"
-    var trick = document.createElement("div")
-    trick.id = "OCLOCK_TRICK"
-    trick.style.font = this.config.centerFont // prefetch fonts
-    trick.innerHTML = '&nbsp;'
     wrapper.appendChild(canvas)
-    wrapper.appendChild(trick)
     return wrapper
-  },
-
-  getAge: function(now) {
-    let age = now.year() - this.config.birthYear
-    if (this.config.birthMonth > 0 && (1 + now.month()) < this.config.birthMonth) age -= 1
-    return age
-  },
-
-  getPros: function(now, hand) {
-    if (hand === 'age' && this.config.birthYear) {
-      let age = this.getAge(now)
-      return this.config.linearLife
-        ? age / this.endMap[hand]
-        : Math.log(1 + age/25) / Math.log(1+this.endMap[hand]/25);
-    }
-    return now.format(this.config.handConversionMap[hand]) / this.endMap[hand]
   },
 
   getNow: function() {
@@ -205,66 +140,37 @@ Module.register("MMM-OClock", {
   },
 
   drawFace: function() {
-    var now = this.getNow()
-    this.endMap = {
-      "age": this.config.birthYear
-        // explanation of this formula: if someone is near the end of,
-        // or passed, their life expectancy, give them a few more years!
-        ? Math.min(1.2*(this.config.birthYear-10), this.config.lifeExpectancy)
-        : 0,
-      "year": now.format("YYYY"),
-      "month": 12,
-      "date": now.daysInMonth(),
-      "week": (this.config.handConversionMap["week"] == "W") ? now.isoWeeksInYear() : now.weeksInYear(),
-      "day": 7,
-      "hour": (this.config.handConversionMap["hour"] == "H") ? 24 : 12,
-      "minute": 60,
-      "second": 60,
-    }
-
     var ctx = this.getCtx();
+    //Clear Everything
     ctx.clearRect(0, 0, this.getDim('canvasWidth'), this.getDim('canvasHeight'))
     var postArc = []
     var distance = 0
-    if (this.config.centerR) {
-      ctx.beginPath()
-      ctx.fillStyle = this.config.centerColor
-      ctx.arc(this.center.x, this.center.y, this.getDim('centerR'), 0, 2 * Math.PI)
-      ctx.closePath()
-      ctx.fill()
-      if (this.config.centerTextFormat) {
-        ctx.font= this.config.centerFont
-        ctx.fillStyle = this.config.centerTextColor
-        ctx.fillText(now.format(this.config.centerTextFormat), this.center.x, this.center.y)
-      }
 
-      distance = this.getDim('centerR') + this.config.space
+    //Draw Center Circle and Fill in
+    ctx.beginPath()
+    ctx.fillStyle = this.config.centerColor
+    ctx.arc(this.center.x, this.center.y, this.getDim('centerR'), 0, 2 * Math.PI)
+    ctx.closePath()
+    ctx.fill()
+    ctx.font= "bold 80px Roboto",
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillText(this.totalseconds + ' s', this.center.x, this.center.y)
+  
+    //Draw Countdown Arc
+    distance = this.getDim('centerR') + this.config.space
+    distance +=  20
+    var cfg = {
+      index: 0,
+      type: "timer",
+      center: this.center,
+      distance: distance,
+      pros: this.getSecondsLeft() / this.totalseconds,
+      width: 40,
+      text: this.getSecondsLeft()
     }
-    for (var i=0; i < this.config.hands.length; i++) {
-      let handWidth = this.getDim('handWidth', i)
-      let hand = this.config.hands[i]
-      distance +=  handWidth / 2
-      var cfg = {
-        index: i,
-        type: hand,
-        center: this.center,
-        distance: distance,
-        pros: this.getPros(now, hand),
-        width: handWidth,
-        text: (this.config.handTextFormat[i])
-          ? (hand === 'age' && this.config.birthYear
-              ? this.getAge(now)
-              : now.format(this.config.handTextFormat[i]))
-          : ""
-      }
-      postArc.push(this.drawArc(ctx, cfg))
-      if (hand === 'second') this.secondsCfg = cfg
-      distance += handWidth / 2 + this.config.space
-    }
-    for (var i in postArc) {
-      var post = postArc[i]
-      this.drawPost(ctx, post)
-    }
+    let arcresult=this.drawArc(ctx, cfg);
+    this.drawPost(ctx, arcresult)
+    
   },
 
   drawArc: function(ctx, cfg) {
@@ -288,122 +194,48 @@ Module.register("MMM-OClock", {
     var radian = progress(cfg.pros)
     var rad0 = 1.5 * Math.PI
 
-    color = this.getColor(cfg.index, cfg.pros)
-    ctx.fillStyle = color
-    ctx.strokeStyle = color
-
-    if (this.config.ageBarColor && cfg.type === 'age') {
-      let left = cfg.center.x - cfg.distance/2
-      let top = cfg.center.y - cfg.distance/2
-      let ncolors = this.config.ageBarColor.length
-      if (!ncolors) {
-        this.config.ageBarColor = [this.getColor(cfg.index, 0), color]
-        ncolors = 2
-      }
-
-      let gradient = ctx.createLinearGradient(left, top+cfg.distance, left+cfg.distance, top)
-      this.config.ageBarColor.forEach((c,i) => gradient.addColorStop(1-i/(ncolors-1), c))
-      ctx.fillStyle = gradient
-      ctx.strokeStyle = gradient
-      color = this.config.ageBarColor[ncolors-1]
-    }
+    color = "red";
+    ctx.fillStyle = "red";
+    ctx.strokeStyle = "red";
 
     var sX = cfg.center.x + (Math.cos(radian) * cfg.distance)
     var sY = cfg.center.y + (Math.sin(radian) * cfg.distance)
 
-    if (this.config.handType == "round") {
-      ctx.lineWidth = 1
-      ctx.beginPath()
-      ctx.arc(startPoint.x, startPoint.y, (cfg.width / 2), 0, 2 * Math.PI)
-      ctx.closePath()
-      ctx.fill()
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.arc(startPoint.x, startPoint.y, (cfg.width / 2), 0, 2 * Math.PI)
+    ctx.closePath()
+    ctx.fill()
 
-      ctx.beginPath()
-      ctx.arc(sX, sY, (cfg.width / 2), 0, 2 * Math.PI)
-      ctx.closePath()
-      ctx.fill()
-    }
+    ctx.beginPath()
+    ctx.arc(sX, sY, (cfg.width / 2), 0, 2 * Math.PI)
+    ctx.closePath()
+    ctx.fill()
+    
     ctx.beginPath()
     ctx.lineWidth = cfg.width;
     ctx.arc(cfg.center.x, cfg.center.y, cfg.distance, rad0, radian)
-    //ctx.arc(cntX, cntY, distance, rad0, 3.5*Math.PI,)
     ctx.stroke()
     return {x:sX, y:sY, c:color, h:cfg.type, t:cfg.text}
   },
 
-  getColor: function(index, pros) {
-    var hsv = function (h, s, v) {
-      var r, g, b, i, f, p, q, t
-      if (arguments.length === 1) {
-        s = h.s, v = h.v, h = h.h
-      }
-      i = Math.floor(h * 6)
-      f = h * 6 - i
-      p = v * (1 - s)
-      q = v * (1 - f * s)
-      t = v * (1 - (1 - f) * s)
-      switch (i % 6) {
-        case 0: r = v, g = t, b = p; break
-        case 1: r = q, g = v, b = p; break
-        case 2: r = p, g = v, b = t; break
-        case 3: r = p, g = q, b = v; break
-        case 4: r = t, g = p, b = v; break
-        case 5: r = v, g = p, b = q; break
-      }
-      return "rgb(" + Math.round(r * 255) + "," + Math.round(g * 255) + "," + Math.round(b * 255) + ")"
-    }
-    switch(this.config.colorType) {
-      case "hsv":
-        var p = pros + this.config.colorTypeHSV
-        if (p > 1) {
-          p = p - 1
-        }
-        return hsv(p, 1, 1)
-      case "static":
-        return this.config.colorTypeStatic[index]
-      case "radiation":
-        var n = this.config.hands.length
-        var rgb = []
-        for (var i = 0; i < 3; i++) {
-          var s = this.colorRange.start[i]
-          var e = this.colorRange.end[i]
-
-          rgb.push(Math.round(s + ((e - s) / n * index)))
-        }
-        return "rgb(" + rgb.join() + ")"
-
-      case "transform":
-        var n = 1
-        var rgb = []
-        for (var i = 0; i < 3; i++) {
-          var s = this.colorRange.start[i]
-          var e = this.colorRange.end[i]
-          rgb.push(Math.round(s + ((e - s) / n * pros)))
-        }
-        return "rgb(" + rgb.join() + ")"
-    }
-  },
-
   drawPost: function(ctx, item) {
-    if (item.h === 'second') return
-    if (this.config.useNail) {
-      let nailSize = this.config.nailSize
-      ctx.beginPath()
-      ctx.lineWidth=1;
-      ctx.fillStyle = item.c
-      ctx.arc(item.x, item.y, nailSize/2, 0, 2*Math.PI)
-      ctx.closePath()
-      ctx.fill()
+    ctx.beginPath()
+    ctx.lineWidth=1;
+    ctx.fillStyle = "#ff0000";
+    ctx.arc(item.x, item.y, 20, 0, 2*Math.PI)
+    ctx.closePath()
+    ctx.fill()
 
-      ctx.beginPath()
-      ctx.lineWidth=1;
-      ctx.fillStyle = this.config.nailBgColor
-      ctx.arc(item.x, item.y, nailSize/2 - 5, 0, 2*Math.PI)
-      ctx.closePath()
-      ctx.fill()
-    }
-    ctx.font= this.config.handFont
-    ctx.fillStyle = (this.config.nailTextColor == "inherit") ? item.c : this.config.nailTextColor
+    ctx.beginPath()
+    ctx.lineWidth=1;
+    ctx.fillStyle = "#000000"
+    ctx.arc(item.x, item.y, 20 - 5, 0, 2*Math.PI)
+    ctx.closePath()
+    ctx.fill()
+    
+    ctx.font= "bold 16px Roboto",
+    ctx.fillStyle = "#FFFFFF" //white
     ctx.fillText(item.t, item.x, item.y)
   },
 })
